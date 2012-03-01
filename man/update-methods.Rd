@@ -1,17 +1,20 @@
 \name{update-methods}
 \alias{update-methods}
 \alias{update,PointProcessModel-method}
+\alias{update,MultivariatePointProcess-method}
 \title{update}
 \description{
   
   The function \command{update} will update and refit a
-  \code{PointProcessModel}.
+  \code{PointProcessModel} and a \code{MultivariatePointProcess}.
   
 }
 \usage{
 
 \S4method{update}{PointProcessModel}(object, formula = .~., warmStart = TRUE,
-  fixedCoefficients = list(), ...)
+  fixedCoefficients = list(), fit = TRUE, \dots)
+
+\S4method{update}{MultivariatePointProcess}(object, formula = .~., \dots)
 
 }
 \arguments{
@@ -36,22 +39,28 @@
     specified, it overides any fixed coefficients in \code{object} - no
     attempt is made to merge the two sets of fixed coefficients.}
 
-  \item{...}{additional arguments to the call. Passed on to \code{ppmFit}.}
+  \item{fit}{a \code{logical}. Should the model be refitted. Default
+  value is \code{TRUE}.}
+
+  \item{\dots}{additional arguments to the call. Passed on to \code{ppmFit}.}
 }
 
 
 \value{
   
-  An object of class \code{\linkS4class{PointProcessModel}} containing the
-  estimated parameters after the update. 
+  An object of class \code{\linkS4class{PointProcessModel}} or
+  \code{\linkS4class{MultivariatePointProcess}} containing the estimated
+  parameters after the update.
   
 }
 
 \details{
+
   This function is used to update and refit a model of class
-  \code{\linkS4class{PointProcessModel}} as an alternative to constructing a
-  new model object by calling the function \command{pointProcessModel}
-  directly.
+  \code{\linkS4class{PointProcessModel}} or
+  \code{\linkS4class{MultivariatePointProcess}} as an alternative to
+  constructing a new model object by calling the function
+  \command{pointProcessModel} directly.
 
   A call of \code{update} without specifying the \code{formula} will
   refit the model without recomputing the model matrix. Combined with

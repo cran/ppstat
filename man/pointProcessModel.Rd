@@ -3,6 +3,7 @@
 \alias{pointProcessSmooth}
 \alias{ppmFit}
 \alias{ppmFit,PointProcessModel-method}
+\alias{ppmFit,MultivariatePointProcess-method}
 
 \title{
   Construction and fitting of a generalized linear point process model.
@@ -10,18 +11,18 @@
 \description{
   
   The functions \code{pointProcessModel} and \code{pointProcessSmooth}
-  construct objects of class \code{PointProcessModel} and
+  construct objects of class \code{PointProcessModel} or \code{MultivariatePointProcess} and
   \code{PointProcessSmooth}, respectively, and fit a
   generalized linear point process model where the intensity function is
   given in terms of a linear predictor process; a linear combination of
   linear filters. The linear filters are specified through a symbolic
   description of the linear predictor process. The function
-  \code{ppmFit} does that actual fitting. 
+  \code{ppmFit} does the actual fitting. 
   
 }
 \usage{
 
-pointProcessModel(formula, data, family, support, N = 200, Delta,
+pointProcessModel(formula, data, family, support = 1, N = 200, Delta,
   basisPoints, Omega, coefficients, fixedCoefficients = list(),
   modelMatrix = TRUE, fit = modelMatrix, varMethod = 'Fisher',
   basisEnv, ...)
@@ -31,7 +32,11 @@ pointProcessSmooth(formula, data, family, support, lambda = 1,
   fixedCoefficients = list(), fit = TRUE, varMethod = 'Fisher',
   basisEnv, ...)
 
-ppmFit(model, control=list(), ...)
+\S4method{ppmFit}{PointProcessModel}(model, control = list(),
+optim = 'optim', selfStart = FALSE, ...)
+
+\S4method{ppmFit}{MultivariatePointProcess}(model, control = list(), ...)
+
 }
 \arguments{
 
@@ -49,8 +54,8 @@ ppmFit(model, control=list(), ...)
   \item{support}{a \code{numeric} vector. Specifies the support of the
     filter functions as the interval from \code{support[1]} to
     \code{support[2]}. If \code{support} is of length 1 the support is the
-    interval from 0 to \code{support[1]}. This argument must be
-    specified if \code{basisPoints} is not.}
+    interval from 0 to \code{support[1]}. Is ignored if
+    \code{basisPoints} is specified. The default value is 1.}
 
   \item{lambda}{a \code{numeric}. The tuning parameter for the
   penalization term used in \code{pointProcessSmooth}. Default value is
@@ -107,9 +112,22 @@ ppmFit(model, control=list(), ...)
   \item{model}{a point process model as an object of class
     \code{\linkS4class{PointProcessModel}}.}
 
-  \item{control}{a \code{list} of control parameters for \code{optim}.}
+  \item{control}{a \code{list} of control parameters for the numerical
+  optimization algorithm, e.g. \code{optim}.}
 
-  \item{\dots}{additional parameters that are passed on to \code{optim}.}
+  \item{optim}{a \code{character} specifying the actual optimization
+  method. The default is \code{'optim'}. Other possibilities are
+  \code{'poisson'}, \code{'glmnet'}, \code{'iwls'} and \code{'ls'}. See
+  details below for a description.}
+
+  \item{selfStart}{a \code{logical} specifying if the fitting procedure
+  should compute a preliminary estimate before the actual
+  optimization. Default is \code{FALSE} which means that \code{ppmFit}
+  uses the current model parameters as starting values.}
+
+  \item{\dots}{additional parameters that are passed on to \code{ppmFit}
+    or the optimization algorithm, e.g. \code{optim}.}
+  
 }
 \details{
  \code{pointProcessModel} is the main function for estimation of a generalized
@@ -125,9 +143,9 @@ ppmFit(model, control=list(), ...)
 
   When calling \code{pointProcessModel} the three arguments
   \code{formula}, \code{data} and \code{family} must always be
-  specified. In addition, either the argument \code{support} (and
+  specified. In addition, a specification of the argument \code{support} (and
   optionally \code{N} or \code{Delta}) or the argument
-  \code{basisPoints} needs to be specified.
+  \code{basisPoints} should be considered.
 
   The \code{formula} specifies together with the \code{family} the
   conditional intensity for a point process in terms of the history of
@@ -135,7 +153,7 @@ ppmFit(model, control=list(), ...)
   variables. The \code{formula} alone specifies a \dfn{linear predictor
   process}, which consists of a linear combination of stochastic
   processes determined by the terms in the formula. The parameters to be
-  estimated in the model are the coefficients for this linear
+  estimated in the model are the coefficients in this linear
   combination. The stochastic processes are computed and stored in the
   model matrix. The \code{family} specifies a \eqn{\phi}{phi} function
   that transforms the linear predictor process into the conditional
@@ -174,7 +192,7 @@ ppmFit(model, control=list(), ...)
     s_n}, and \code{f(M)} is a term in the formula, the corresponding
   linear filter 
 
-  \deqn{\sum_{i : t-s_i \in \mathrm{support}} f(t-s_i)}{sum_{i: t-s_i \in support} f(t-s_i)}
+  \deqn{\sum_{i : t-s_i \in \mathrm{support}} f(t-s_i)}{sum_{i: t-s_i in support} f(t-s_i)}
 
   then enters as a term in the linear predictor process.  Expansions of
   a filter function in terms of basis functions is possible, using
@@ -186,11 +204,11 @@ ppmFit(model, control=list(), ...)
   an affine filter function can be obtained by including \code{I(const(M)
   + M)} in the formula.
 
-  As described above, there is a fundamental difference between the ways 
+  As described above, there is a fundamental difference in the ways that 
   a point process and a continuous process enter in the model
   specification. A continuous process enters \emph{as is}
   whereas a point process enters through a linear filter. This is
-  believed to be natural in most cases - the point history needs to be
+  considered to be natural in most cases - the point history needs to be
   aggregated through a linear filter before it enters in the
   specification of the conditional intensity, whereas it is the
   instantaneous value of the continuous process that determines the
@@ -201,30 +219,43 @@ ppmFit(model, control=list(), ...)
   \code{f(V.d)} is a term in the formula, the corresponding
   linear filter 
 
-  \deqn{V_0 + \int_{\mathrm{support}} f(s) (V_{(t-s)-} - V_0) \mathrm{d}s
-  }{V(0) + int_{support} f(s) (V((t-s)-) - V(0))ds}
+  \deqn{\int_{\mathrm{support}} f(s) V_{(t-s)-} \mathrm{d}s
+  }{int_{support} f(s) V((t-s)-)ds}
 
   then enters as a term in the linear predictor process. As for point
   processes, the filter function can be expanded using any set of basis
-  functions. 
+  functions. Currently, the implementation only supports causal
+  filters. Note that the specified filter functions are 
+  normalized to integrate, numerically, to 1 and that the process is
+  padded with its initial value to the left. 
 
-  \code{ppmFit} does the actual estimation of the model. It is usually
-  not called directly by the user. The current implementation does
-  numerical minimization of the minus-log-likelihood function using
-  \code{optim} - in general using the BFGS-algorithm. However, if the identity
-   \eqn{\phi}{phi} function is used (choose \code{link="identity"} in the family
-  specification) the L-BFGS-B-algorithm is used
-  instead, with the default lower bound \code{sqrt(Machine$double.eps)} on the
-  intercept parameter and 0 on other parameters.  
+  The left hand side of the formula can be a point process variable or a sum of
+  point process variables, in which case a univariate point process model is
+  fitted. It can also be a vector of point process variables in which
+  case a multivariate point process model is fitted. 
+
+  \code{ppmFit} is called for the estimation of the model. If the model
+  is set up with \code{fit = FALSE} initially, the model parameters can
+  subsequently be estimated by calling \code{ppmFit}. It is usually not
+  called directly by the user. Depending on the \code{optim} argument
+  it calls the appropriate internal function for the actual
+  optimization. The current default does numerical minimization of
+  the (time-discretized) minus-log-likelihood function using \code{optim} - in general
+  using the BFGS-algorithm. However, if the identity \eqn{\phi}{phi}
+  function is used (choose \code{link = "identity"} in the family
+  specification) the L-BFGS-B-algorithm is used instead, with the
+  default lower bound \code{sqrt(Machine$double.eps)} on the intercept
+  parameter and 0 on other parameters. The alternatives are described
+  below. 
   
   Control parameters for the numerical optimization may be passed to the
-  \code{optim} function via the \code{control} argument for
-  \code{ppmFit}. The maximal number of iterations for the
-  algorithm is set to 1000 when used in \code{ppmFit} in
-  contrast to the default for \code{optim}, which is 100. See
-  \code{\link{optim}} for details. A \code{control}
-  argument in a call of \code{pointProcessModel} is automatically passed
-  on to the call of \code{ppmFit}.
+  \code{optim} function, or the other optimization functions, via the
+  \code{control} argument for \code{ppmFit}. The maximal number of
+  iterations for the algorithm is set to 1000 when used in \code{ppmFit}
+  in contrast to the default for \code{optim}, which is 100. See
+  \code{\link{optim}} for details. A \code{control} argument in a call
+  of \code{pointProcessModel} is automatically passed on to the call of
+  \code{ppmFit}.
 
   The \code{optim} method can always be specified via a named
   \code{method} argument, which is passed to \code{optim}. The L-BFGS-B
@@ -237,9 +268,37 @@ ppmFit(model, control=list(), ...)
   more parameter value(s) on the boundary of the parameter space, the
   estimated standard errors based on the inverse Fisher information are
   unreliable. This holds true for the default method with the identity
-  \eqn{\phi}{phi} function as well.}
+  \eqn{\phi}{phi} function as well.
 
-\value{ An object of class \code{\linkS4class{PointProcessModel}}
+  Alternatives to \code{optim = 'optim'}, all experimental, include
+  \code{optim = 'poisson'} based on \code{glm.fit} for the Poisson
+  family. The implementation is based on the same time-discretized
+  approximation to the minus-log-likelihood as with the \code{optim}
+  function and gives comparable results. For large sparse model matrices
+  the \code{optim} function is usually faster because function and
+  gradient evaluations exploit sparse matrix operations. With
+  \code{optim = 'poisson'} the model matrix is coerced to a dense
+  matrix. With \code{optim = 'iwls'} an R implementation exploiting
+  sparse matrix operations of the iterative weighted least squares
+  algorithm is used as with \code{optim = 'poisson'}. The result should
+  be comparable to that of the two methods described above. With
+  \code{optim = 'ls'} a least squares criterion is used, which only
+  works with \eqn{\phi}{phi} the identity. In this case the resulting
+  quadratic optimization problem is faster to solve than minimizing the
+  minus-log-likelihood. Technically, for the resulting model to be a
+  well specified point process, the solution has to fulfill a positivity
+  contraint, which is currently not enforced. Finally, with \code{optim
+  = 'glmnet'} the parameters are penalized with an \eqn{l_1}{l1}-norm
+  and the solution is computed using the \code{glmnet} function. This
+  works with \eqn{\phi}{phi} the identity, in which case a least squares
+  criterion is used, and with \eqn{\phi}{phi} the exponential (that is,
+  with a log-link function), in which case the minus-log-likelihood is
+  used.
+  
+}
+
+\value{ An object of class \code{\linkS4class{PointProcessModel}} or
+  \code{\linkS4class{MultivariatePointProcess}} 
   containing the estimated parameters.
 
   The function \code{pointProcessSmooth} returns an object of class
@@ -262,9 +321,17 @@ ppmFit(model, control=list(), ...)
   object of class \code{PointProcessSmooth} may produce misleading
   information. There is e.g. no correction of the degrees of freedom,
   nor of the AIC statistics owing to the fact that this is a smoothed
-  and penalized fit.  
-  
+  and penalized fit.
+
+  The current implementation supports linear filters of continuous
+  processes through the \code{.d} notation in the formula. However, the
+  data structure allows for non-equidistant sampling, and the filter
+  computations are done using numerical integration and not
+  FFT. Consequently, the computation of the model matrix for large data
+  sets can be prohibitively slow.
+
 }
+
 
 \references{
   Hansen, N. R. \emph{Penalized maximum likelihood estimation for
@@ -278,7 +345,8 @@ Maintainer: \email{Niels.R.Hansen@math.ku.dk}
 
 \seealso{
   \code{\linkS4class{PointProcessModel}},  \code{\link{update}},
-  \code{\link{optim}}, \code{\link{bSpline}}, \code{\link{termPlot}}.
+  \code{\link{optim}}, \code{\link{bSpline}}, \code{\link{termPlot}},
+  \code{\link{registerParBackend}}, \code{\link{glm.fit}}.
 }
 \examples{
 data(toyData)

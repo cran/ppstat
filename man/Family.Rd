@@ -1,5 +1,6 @@
 \name{Family-class}
 \docType{class}
+\alias{Family}
 \alias{Family-class}
 \alias{family,Family-method}
 \alias{makeLink}
@@ -49,7 +50,7 @@ Alternatively, the constructors \code{\link{Hawkes}} and
   
   Implemented standard link functions are, \code{'log'}, \code{'logit'},
   \code{'cloglog'}, \code{'identity'}, \code{'root'},
-  \code{'logaffine'}.  The latter two requires the specification of the
+  \code{'logaffine'}.  The latter two require the specification of the
   additional parameter \code{c}, which by default is 0. For
   \code{'root'} the resulting \eqn{\phi}{phi}-function is
 
@@ -68,9 +69,9 @@ Alternatively, the constructors \code{\link{Hawkes}} and
 
   Note that in order to prevent taking the logarithm of 0 in the
   computation of the minus-log-likelihood function, and thus preventing
-  the minus-log-likelihood from taking the value \code{Inf}, all the
-  standard link functions are truncated below at the value
-  \code{.Machine$double.eps}.
+  the minus-log-likelihood from taking the value \code{Inf}, the
+  implementation modifies the standard link functions to be bounded
+  below by \code{.Machine$double.eps}.
 
 }
     

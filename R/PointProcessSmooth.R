@@ -70,21 +70,25 @@ pointProcessSmooth <- function(
     fList[[specialTerms[i]]] <- termFunction(knots = knots[[specialTerms[i]]])
     termLabels[specialTerms[i]] <- term
   }
-
-  formula <- reformulate(termLabels, response = response)
-
-  argList$formula <- formula
+  
+  formula <- paste(paste(response, collapse = "+"), "~", paste(termLabels, collapse = "+"), collapse = "")
+  if(attr(terms, "intercept") == 0)
+    formula <- paste(formula, "-1", collapse = "")
+  
+  argList$formula <- as.formula(formula)
   
   model <- do.call("pointProcessModel", argList)
   ## TODO: Modify colnames for the model matrix. 
   nrCoef <- dim(getModelMatrix(model))[2]
   Omega <- matrix(0, ncol = nrCoef, nrow = nrCoef)
-
   for(i in seq_along(specialTerms)) {
-    penCoef <- which(attr(getModelMatrix(model), "assign") == specialTerms[i])
+    penCoef <- which(getAssign(model) == specialTerms[i])
     d <- length(penCoef)
     s1 <- s2 <- s3 <- s4 <- numeric(d)
-    s <-  .Fortran("sgram", as.double(s1), as.double(s2), as.double(s3), as.double(s4), as.double(knots[[specialTerms[i]]]), as.integer(d))
+    s <-  .Fortran("sgram", as.double(s1), as.double(s2),
+                   as.double(s3), as.double(s4),
+                   as.double(knots[[specialTerms[i]]]),
+                   as.integer(d))
     pen <- matrix(0, d, d)
     diag(pen) <- s[[1]]
     pen[seq(2,d*d,d+1)] <- pen[seq(d+1,d*d,d+1)] <- s[[2]][1:(d-1)]
@@ -96,8 +100,12 @@ pointProcessSmooth <- function(
   model@Omega <- lambda*Omega
   model@penalization <- TRUE
   
-  if(fit) 
-    model <- ppmFit(model, ...)
+  if(fit) {
+    model <- ppmFit(model, selfStart = TRUE, ...)
+  } else {
+    ## Initializing the variance matrix without computing it.
+    model <- computeVar(model, method = "none")
+  }
   
   model@call <- call
   model <- as(model, "PointProcessSmooth")
@@ -148,7 +156,7 @@ computeKnots <- function(x, y, support, variables, strategy = "log", method = "s
 ## TODO: New summary function for an object of class 'PointProcessSmooth'.
 ## TODO: New update function. Model matrix needs to be recomputed if we change response
 
-setMethod("summary","PointProcessSmooth",
+setMethod("summary", "PointProcessSmooth",
           function(object,...) {
             callNextMethod()
           }
