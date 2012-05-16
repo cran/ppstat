@@ -1,287 +1,279 @@
+pointProcessKernel <- function(
+                        formula,
+                        data,
+                        family,
+                        support = 1,
+                        N = 200,
+                        Delta,
+                        Omega,
+                        coefficients,
+                        fixedCoefficients = list(),
+                        modelMatrix = TRUE,
+                        fit = modelMatrix,
+                        varMethod = 'Fisher',
+                        basisEnv,
+                        kernel = sobolevKernel
+                        ...) {
+  
+  call <- match.call()
+  argList <- as.list(call)[-1]
+  argList$fit <- FALSE
+  argList$modelMatrix <- FALSE
+  model <- do.call("pointProcessModel", argList)
+  if (class(model) == "MultivariatePointProcess")
+    stop("Multivariate models not currently supported with 'pointProcessKernel'.")
+  
+  if (modelMatrix) {
+      model <- computeModelMatrix(as(model, "PointProcessKernel"))
+    }
+  else {
+    model <- updateKernelMatrix(as(model, "PointProcessKernel"),
+                                Matrix(),
+                                assign = numeric(),
+                                form = formula(~0)
+                                )
+  }
 
-setClass("PointProcessKernel",
-         representation(
-                        modelMatrix = "Matrix",
-                        recurrenceMatrix = "list", ### This is a list of sparse matrices of class "Matrix"
-###                        integrationMatrix = "list"
-                        labels = "list",          ### a list with two entries holding the term labels and idLevels
-                                                  ### used in the namings of the entries in the recurrenceMatrix
-                        g = "matrix",            ### A matrix of g-evalutions at 0,Delta,2Delta,...
-                        coefficients = "numeric",
-                        Omega = "matrix",
-                        penalization = "logical",
-                        var = "matrix",
-                        optimResult="list"
-                        ),
-         contains="PointProcess")
+  grid <- model@basisPoints
+  support <- model@support
+    
+  G1 <- outer(grid, grid, kernel, t = support[2], sub = 1)
+  G <- outer(grid, grid, kernel, t = support[2])
+  G1svd <- svd(G1, nv = 0)
+  ### Select computationally non-zero singular values.
+  model@d <- G1svd$d/G1svd$d[1] > 5*.Machine$double.eps   
+  G1svd$d <- ifelse(model@d, G1svd$d, 1)
+  model@U <- G %*% t(t(G1svd$u)/sqrt(G1svd$d))
 
-### TODO: The current implementation below is a preliminary attempt to make the
-### general gradient algorithm work. This should change into a class
-### relying on reproducing kernels.
+  if(fit) {
+    model <- ppmFit(model, selfStart = selfStart, ...)
+  } else {
+    ## Initializing the variance matrix without computing it.
+    model <- computeVar(model, method = "none")  
+    ##  TODO: correct to work with multivariate models
+    ##    model@optimResult <- list(value = computeMinusLogLikelihood(model),
+    ##                              counts = c(0, 0),
+    ##                              convergence = NA)
+  }
 
-setMethod("initialize","PointProcessKernel",
-          function(.Object,
-                   processData,
-                   formula,
-                   family,
-                   support,
-                   Delta,
-                   fit=TRUE,
-                   recurrenceMatrix = TRUE,
-                   g = NULL,
-                   Omega=NULL,
-                   call=NULL,...){
-            .Object@processDataEnv <- new.env(.GlobalEnv)
-            .Object@processDataEnv$processData <- processData
-            lockEnvironment(.Object@processDataEnv,bindings=TRUE)
-            .Object@formula <- formula
-            .Object@family <- family
-            .Object@support <- support
-            .Object@Delta <- Delta
-            if(!is.null(Omega)) {
-              if(any(Omega != t(Omega))) {
-                Omega <- (Omega + t(Omega))/2
-                warning("Penalization matrix Omega is not symmetric and is replaced by  (Omega + t(Omega))/2.")
-              }
-              if(!isTRUE(all.equal(min(eigen(Omega,only.values=TRUE,symmetric=TRUE)$values,0),0))) {
-                stop("Penalization matrix Omega is not positive semi-definite.")
-              }
-              .Object@Omega <- Omega
-              .Object@penalization <- TRUE
-            } else if(is.null(Omega)) .Object@penalization <- FALSE
-            
-            .Object@delta <- as.numeric(unlist(tapply(getPosition(getContinuousProcess(getProcessData(.Object))),
-                                                      getId(getContinuousProcess(getProcessData(.Object))),
-                                                      function(x) c(diff(x),0)),use.names=FALSE))
-            
-            if(recurrenceMatrix) {
-              .Object <- computeRecurrenceMatrix(.Object)
-            }
+  return(model)
+}
 
-            if(is.null(g)) {
-              if(recurrenceMatrix) {
-                ##        dimensions <- lapply(.Object@integrationMatrix,function(x) dim(x)[2])
-                ##                 nrTerms <- max(dimensions)
-                g <- matrix(0,nrow=1+supportBound/Delta,ncol=length(.Object@labels$termLabels))
-                colnames(g) <- .Object@labels$termLabels 
-              } else {
-                g <- 0
-              }
-            } else {
-              g <- g
-            }
-              
-            if(fit){
-              .Object <- glppsFit(.Object,...)
-            }
-          
-          
-          if(!is.null(call)) .Object@call <- call
-          return(.Object)
-          }
-          )
 
-setMethod("coefficients","PointProcessKernel",
-          function(object,...){
-            return(list(object@g,object@coefficients))
-          }
-          )
+setMethod("computeModelMatrix", "PointProcessKernel",
+          function(model, evaluationPositions = NULL, ...){
 
-setMethod("computeRecurrenceMatrix","PointProcessKernel",
-          function(model,evaluationPositions=NULL,...){
+            ## The 'model' of class PointProcessKernel contains the data
+            ## as an object of class MarkedPointProcess and the formula for the
+            ## model specification. The 'evalPositions' below corresponding to
+            ## the model matrix rows are either given by the 'evaluationPositions'
+            ## argument or extracted from the the MarkedPointProcess object (default).
 
-            fR <- function(s) s*as.numeric(s >= model@support[1] & s <= model@support[2])
-
-            design <- list()
-            designList <- list()
-            
             if(is.null(evaluationPositions)) {
-              evalPositions <- tapply(getPosition(getContinuousProcess(getProcessData(model))),
-                                      getId(getContinuousProcess(getProcessData(model))),list)
+              evalPositions <- tapply(getPosition(processData(model)),
+                                      getId(processData(model)), list)
             } else {
               evalPositions <- evaluationPositions
             }
+
+            ## Checks if the model is allowed to be anticipating and sets
+            ## the 'zero' accordingly.
+
+            if(ppstat:::anticipating(model)) {
+              zero <- which(model@basisPoints == 0) - 1
+            } else {
+              zero <- 0
+            }
+              
+            ## The observed points ('positions') for the marked point process,
+            ## the corresponding 'id' labels and 'marks' are extracted.
             
-            markedPointProcess <- getMarkedPointProcess(getProcessData(model))
-            positions <- getPosition(markedPointProcess)
-
-            id <- factor(getId(markedPointProcess))
+            processData <- processData(model)
+            positions <- getPointPosition(processData)
+            r <- length(model@basisPoints)
+            
+            id <- factor(getPointId(processData))
             idLevels <- levels(id)
-
-            marks <- getMarkType(markedPointProcess)
+            
+            marks <- getMarkType(processData, drop = FALSE)
             markLevels <- levels(marks)
 
-            mt <- terms(model@formula) 
-            termLabels <- attr(mt,"term.labels")
-            notMarkTerms <- character()
+            ## The special terms in the formula that encodes the
+            ## linear filters that are modeled non-parametrically are
+            ## identified and the formula for the remaining model
+            ## specification is constructed.
+
+            formula <- formula(model)
+            terms <- terms(formula, "k")
+            kernels <- attr(delete.response(terms), "specials")$k
+            formulaNoKernels <- formula(terms[-kernels])
+            kernelVar <- 1 + attr(terms, "response") + kernels
+            kernelVar <- sapply(as.list(attr(terms, "variables"))[kernelVar],
+                                 all.vars)
+            terms <- delete.response(terms)
+            termLabels <- attr(terms, "term.labels")
+
+            if(!all(kernelVar %in% markLevels))
+              stop("The use of kernel filters is only implemented for point process variables.")
+
+            ## The points where the basis functions are evaluated are extracted
+            ## and the list of model matrices ('design') is set up, which holds model
+            ## matrices for the different terms. 'assign' will be an attribute to  
+            ## the model matrix of length equal to the number of columns, and for
+            ## each column pointing to the term number. 
+                        
+            ## Model matrix computations for the terms involving filters:
+
+            design <- ppstat:::lapplyParallel(kernels,
+                                     function(i, ...) {
+                                       term <- termLabels[i]
+                                       variable <- all.vars(terms[i])
+                                       
+                                       ## The occurrence matrix is computed by a loop over 
+                                       ## each value of 'id' whose result is stored in
+                                       ## 'designList'.
+                                       
+                                       ## TODO: C level computation?
+                                       
+                                       designList <- list()
+                                       
+                                       ## Central loop over 'idLevels' and computations of
+                                       ## the occurrence matrix as a sparse matrix, bound together
+                                       ## in one matrix below
+                                       ## and stored in the variable 'localDesign'.
+                                       
+                                       for(i in idLevels) {
+                                         posi <- positions[marks == variable & id == i]
+                                         ## posi is sorted for a valid data object. This is
+                                         ## assumed in the following computation.                                        
+
+                                         xt <- evalPositions[[i]]
+                                         nt <- length(xt)
+                                         xs <- posi
+                                         ns <- 1
+                                         xZ <- numeric(nt*r)
+                                         d <- model@Delta
+                                         antip <- zero
+                                         w <- (r-1)*d
+                                                      
+                                         for(ii in 1:nt) {
+                                           target = xt[ii] + antip;
+                                           while(ns < length(xs) && target > xs[ns+1])
+                                             ns <- ns + 1;
+                                             nss = ns;
+                                             diff = target - xs[ns];
+                                             if(diff > 0) {
+                                               while(diff <= w) 
+                                                 { 
+                                                   lookupIndex = floor(diff/d + 0.5);
+                                                   entry = ii + nt*lookupIndex;
+                                                   xZ[entry] <- xZ[entry] + 1;
+                                                   ns <- ns - 1;
+                                                   if(ns < 1) break;
+                                                   diff = target - xs[ns];
+                                                 }
+                                             }
+                                             ns = nss;
+                                           }
+
+                                         designList[[i]] <- Matrix(xZ, nrow = nt, sparse = TRUE)
+                                       }
+                                       localDesign <- do.call("rBind", designList)
+                                       colnames(localDesign) <- paste(term, 1:r, sep = "")
+                                       localDesign ## The return value
+                                     },     
+                                              mc.preschedule = FALSE 
+                                     ) ## End lapplyParallel
             
-            for(term in termLabels){
+            assign <- unlist(lapply(kernels,
+                                    function(i) {
+                                      rep(i, r)
+                                    }
+                                    )
+                             )
+            names(design) <- termLabels[kernels]
+            kernelMatrix <- do.call("cBind", design)
+            form <- formula(model)
+            attr(form, "kernelTerms") <- kernels
+            model <- updateKernelMatrix(model, kernelMatrix, assign, form)
+            lockEnvironment(model@kernelMatrixEnv, binding = TRUE)
 
-              form <- as.formula(paste("~",term,"-1"))
-              variables <- all.vars(form)
-              mark <- markLevels[markLevels %in% variables]
-              
-              if(length(mark) > 1) {
-                stop(paste("Interaction of two mark types in '",
-                           term,"' is currently not implemented.",sep=""))
-              } else if(length(mark) == 1) {
-                if(mark != term) {
-                  stop(paste("Use of '",term,"' is not implemented",sep=""))
-                } else {
-
-                  form <- as.formula(paste("~fR(",mark,")-1"))
-                  posi <- positions[marks==mark]
-                  idi <- id[marks==mark]
-                  idList <- factor()
-                  last <- as.list(rep(0,length(idLevels)))
-                  names(last) <- idLevels
-                  for(j in seq(along=posi)){
-                    afterPosi <- evalPositions[[idi[j]]] > posi[j]
-                    val <- list(evalPositions[[idi[j]]][afterPosi] - posi[j])
-                    names(val) <- mark
-                    tmp <- model.matrix(form,val)
-                    if(!(idi[j] %in% idLevels[idList])) {
-                      designList[[paste(term,idi[j],sep="")]] <-  Matrix(0,nrow=length(evalPositions[[idi[j]]]),
-                                                                         ncol=length(which(idi == idi[j]))*dim(tmp)[2],
-                                                                         sparse=TRUE)
-                      idList <- c(idList,idi[j])
-                    }
-                    designList[[paste(term,idi[j],sep="")]][afterPosi,
-                                                            seq(last[[idi[j]]]+1,
-                                                                last[[idi[j]]]+dim(tmp)[2])] <- tmp
-                    last[[idi[j]]] <- last[[idi[j]]]+dim(tmp)[2]                   
-                  }
-                } 
-              } else if(length(mark) == 0) notMarkTerms <- c(notMarkTerms,term)
-            }
-
-##           for(k in idLevels) {
-##               labels <- paste(termLabels,k,sep="")
-##               labels <- labels[labels %in% names(designList)]
-##               dimensions <- sapply(designList[[labels]],function(x) dim(x)[2])
-##               integration[[k]] <- bdiag(dimensions,function(d) rep(1,d))
-##               colnames(integration[[k]]) <- termLabels[labels %in% names(designList)]
-##               design[[k]] <- do.call(cBind, designList[[labels]])
-##               }
-
-            model@recurrenceMatrix <- designList
-            model@labels <- list(termLabels = termLabels,idLevels=idLevels)
-###            model@integrationMatrix <- integration
-
-### Model matrix computations for the id and continuous time process
-### components
-            
-            if(attr(mt,"intercept") == 1){
-              notMarkTerms <- paste(c(notMarkTerms,"1"),collapse="+")
-            } else if(length(notMarkTerms) >0) {
-              notMarkTerms <-  paste(paste(notMarkTerms,collapse="+"),"-1")
-            }
-
-            if(length(notMarkTerms) > 0){
-              form <-  as.formula(paste("~",notMarkTerms))
-              variables <- all.vars(form)
-              if(all(variables %in% c("id",colnames(getValue(getContinuousProcess(getProcessData(model))))))) {
-                values <- data.frame(id=getId(getContinuousProcess(getProcessData(model))))
-                notIdVariables <- variables[variables != "id"]
-                if(length(notIdVariables) > 0) {
-                  tmp <- as.matrix(getValue(getContinuousProcess(getProcessData(model)))[,notIdVariables,drop=FALSE])
-                  rownames(tmp) <- rownames(values)
-                  values <- cbind(values,tmp)
-                }
-                tmp <- model.matrix(form,values)
-                model@modelMatrix <- Matrix(tmp,dimnames=dimnames(tmp))
-              } else {
-                stop(paste("Use of non existing variable(s) in:", form))
-              }
-            }
-
-            model@coefficients <- rep(0,dim(model@modelMatrix)[2])
+            formula(model) <- formulaNoSpecials
+            model <- computeModelMatrix(as(model, "PointProcessModel"),
+                                        evaluationPositions = evaluationPositions,
+                                        ...)
+            formula(model) <- formula
             
             return(model)
           }
           )
+
+setMethod("coefficients", "PointProcessKernel",
+          function(object,...){
+            list(object@coefficients, object@g)
+          }
+          )
             
-setMethod("computeLinearPredictor","PointProcessKernel",
-          function(model,coefficients=NULL,...){
-            if(is.null(coefficients)) {
-              g <- coefficients(model)[[1]]
-              coefficients <- coefficients(model)[[2]]
-            } else {
-              g <- coefficients[[1]]
-              coefficients <- coefficients(model)[[2]]              
-            }
-
-            predictors <- list()
-            for(id in model@labels$idLevels) {
-              tmp <- list()
-              for(term in model@labels$termLabels) {
-                label <- paste(term,id,sep="")
-                if(any(label == names(model@recurrenceMatrix))){
-                  tmp[[term]] <- model@recurrenceMatrix[[label]]
-                  lookup <- ceiling(tmp[[term]]@x/model@Delta)
-                  tmp[[term]]@x <- g[lookup,term]
-                  tmp[[term]] <- rowSums(tmp[[term]])    ### Is there a performance gain by returning a sparse result?
-                                                         ### A sparse result creates problems with computations of row sums below?!
-                }
-              }
-              if(length(tmp)==0) stop("No terms for id ",id," in computation of linear predictor.")
-              predictors[[id]] <- do.call(cbind,tmp) 
-              predictors[[id]] <- predictors[[id]] %*% rep(1,dim(predictors[[id]])[2])
-            }
-
-            eta =  do.call(c,predictors) + as.numeric(model@modelMatrix %*% coefficients)
-
-            return(eta)
+setMethod("computeLinearPredictor", "PointProcessKernel",
+          function(model, coefficients = NULL, ...) {
+            if(is.null(coefficients)) 
+              coefficients <- coefficients(model)
+            as.numeric(getModelMatrix(model) %*% coefficients[[1]]) +
+              as.numeric(getKernelMatrix(model) %*% coefficients[[2]])             
           }
           )
 
+setMethod("computeDMinusLogLikelihood", "PointProcessKernel",
+          function(model, coefficients = NULL, eta = NULL, ...) {
+            if(isTRUE(response(model) == ""))
+              stop("No response variable specified.")
+            if(is.null(eta))
+              eta <- computeLinearPredictor(model, coefficients, ...)
 
-setMethod("computeDMinusLogLikelihood","PointProcessKernel",
-          function(model,coefficients=NULL,...){
-            eta <- computeLinearPredictor(model,coefficients=NULL,...)
-            if(attr(terms(model@formula),"response") != 0) {
-              response <- all.vars(model@formula,unique=FALSE)[attr(terms(model@formula),"response")]
-            } else stop("no response variable specified")
-            
-            seqDelta <- model@Delta*seq(ceiling(model@support[1]/model@Delta),ceiling(model@support[2]/model@Delta))
-            dmll <- NULL ### This is bad, should be fixed!
-            
-            if(model@family@link == "log") {
-              mP <- getMarkTypePosition(getProcessData(model),response)
-              weights <- exp(eta)*model@delta
-              ones <-  rep(1,length(mP))
+            kM <- getKernelMatrix(model)
               
-              for(r in seq(along=seqDelta)){
-                intKernels <- list()
-                for(id in model@labels$idLevels) {
-                  tmp <- list()
-                  for(term in model@labels$termLabels) {
-                    label <- paste(term,id,sep="")
-                    if(any(label == names(model@recurrenceMatrix))){
-                      tmp[[term]] <- model@recurrenceMatrix[[label]]
-                      tmp[[term]]@x <- c(tmp[[term]]@x,seqDelta[r])
-                      tmp[[term]] <- rowSums(tmp[[term]])   
-                    }
-                  }
-                  if(length(tmp)==0) stop("No terms for id ",id," in computation of linear predictor.")
-                  intKernels[[id]] <- do.call(cbind,tmp) 
-                }
-                intKernels <- do.call(rbind,intKernels)
-                if(is.null(dmll)) dmll <- matrix(0,nrow=length(seqDelta),ncol=dim(intKernels)[2]) ### Stupid if-sentence
-                dmll[r,] <-  weights %*% intKernels - ones %*% intKernels[mP,]
-            }
+            if(model@family@link == "log") {
+
+              dmll <- (as.vector(t(exp(eta)*model@delta) %*% kM) -
+                colSums(kM[getPointPointer(processData(model), response(model)), , drop = FALSE])) %*% model@gram
 
             } else {
               
-              etaP <- eta[getMarkTypePosition(getProcessData(model),response)]
-              mmP <- model@modelMatrix[getMarkTypePosition(getProcessData(model),response),]
+              etaP <- eta[getPointPointer(processData(model), response(model))]
+              mmP <- kM[getPointPointer(processData(model), response(model)), , drop = FALSE]
 
-              dmll <-  colSums((model@family@Dphi(eta)*model@delta)*model@modelMatrix) -
-                colSums(model@family@Dphi(etaP)/model@family@phi(etaP)*mmP)
+              dmll <-  (as.vector(t(model@family@Dphi(eta)*model@delta) %*% kM) -
+                as.vector(t(model@family@Dphi(etaP)/model@family@phi(etaP)) %*% mmP)) %*% model@gram
               
             }
-            
-            return(dmll)
-            
+
+            c(dmll, computeDMinusLogLikelihood(as(model, "PointProcessModel"),
+                                               eta = eta, ...))
+          }
+          )
+
+setMethod("getKernelMatrix", c(model = "PointProcessKernel", col = "ANY"),
+          function(model, col,...){
+            if(missing(col))
+              col <- model@kernelMatrixCol
+            if(length(col) == 0) {
+              kernelMatrix <- model@kernelMatrixEnv$kernelMatrix
+            } else {
+              kernelMatrix <- model@kernelMatrixEnv$kernelMatrix[, col, drop = FALSE]
+            }
+            return(kernelMatrix)
+          }
+          )
+
+setMethod("updateKernelMatrix", "PointProcessKernel",
+          function(model, kernelMatrix = getKernelMatrix(model), assign = getAssign(model), form){
+            force(kernelMatrix)
+            model@kernelMatrixEnv <- new.env(parent = emptyenv())
+            model@kernelMatrixEnv$kernelMatrix <- kernelMatrix
+            model@kernelMatrixEnv$assign <- assign
+            if(!missing(form))
+              model@kernelMatrixEnv$formula <- form
+            model@kernelMatrixCol <- numeric()
+            return(model)
           }
           )

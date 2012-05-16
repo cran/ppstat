@@ -40,7 +40,7 @@ setClass("PointProcessModel",
                         basisEnv = "environment",
                         
                         ## The 'basisPoints' contains the evaluation
-                        ## points for the basis functions.
+                        ## points (the grid) for the basis functions.
                         basisPoints = "numeric",
                         
                         coefficients = "numeric",
@@ -49,7 +49,7 @@ setClass("PointProcessModel",
                         
                         ## The 'active' columns. Set in update, used
                         ## in getModelMatrix and reset in
-                        ## computeModelMAtrix
+                        ## computeModelMatrix
                         modelMatrixCol = "numeric",
                         
                         ## The modelMatrix of class 'modelMatrix' is
@@ -83,6 +83,34 @@ setClass("PointProcessModel",
 setClass("PointProcessSmooth",
          contains = "PointProcessModel"
          )
+
+setClass("PointProcessKernel",
+         representation(
+           ## Non-parametric components
+           g = "numeric",
+           
+           ## The 'active' kernel columns. Set in update, used
+           ## in getKernelMatrix and reset in
+           ## computeKernelMatrix
+           kernelMatrixCol = "numeric",
+           
+           ## The 'kernelMatrixEnv' contains the
+           ## kernelMatrix used for computations with
+           ## non-parametric kernel filters.
+           kernelMatrixEnv = "environment",
+
+           ## The U matrix is a block diagonal matrix
+           ## stored as a sparse matrix which encodes
+           ## the reparametrization of the kernel
+           ## expansion.
+           U = "sparseMatrix",
+           
+           ## The parameters that are included in the
+           ## penalization in the U^{-1}g
+           ## parametrization.
+           d = "logical"
+                        ),
+         contains = "PointProcessModel")
 
 setClass("MultivariatePointProcess",
          representation(

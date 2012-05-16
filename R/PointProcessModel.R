@@ -5,7 +5,6 @@ pointProcessModel <- function(
                               support = 1,
                               N = 200,
                               Delta,
-                              basisPoints,
                               Omega,
                               coefficients,
                               fixedCoefficients = list(),
@@ -28,21 +27,14 @@ pointProcessModel <- function(
       penalization <- TRUE
     }
 
-  if(missing(basisPoints))
-    {
-      if(length(support) == 1)
-        support <- c(0, max(support[1], 0))
+  if(length(support) == 1)
+    support <- c(0, max(support[1], 0))
+  
+  if(missing(Delta))
+    Delta <- (support[2] - support[1])/N
           
-      if(missing(Delta))
-        Delta <- (support[2] - support[1])/N
-          
-      basisPoints <- sort(unique(c(0, seq(support[1], support[2], Delta))))
-    } else {
-      basisPoints <- sort(unique(c(0, basisPoints)))
-      support = range(basisPoints)
-      Delta = min(diff(basisPoints))
-    }
-      
+  basisPoints <- sort(unique(c(0, seq(support[1], support[2], Delta))))
+  
   delta <- as.numeric(unlist(tapply(getPosition(data),
                                     getId(data),
                                     function(x) c(0, diff(x))),
@@ -209,6 +201,7 @@ setMethod("computeBasis", "PointProcessModel",
               assign("basisComputed", TRUE, model@basisEnv)
 ##              lockBinding("basis", model@basisEnv)
             }
+            ## TODO: Check correct dimensions of basis computations.
             return(model)
           }
           )
@@ -243,10 +236,11 @@ setReplaceMethod("coefficients", c(model = "PointProcessModel", value = "numeric
                  )
 
 setMethod("computeDMinusLogLikelihood", "PointProcessModel",
-          function(model, coefficients = NULL, ...){
+          function(model, coefficients = NULL, eta = NULL, ...){
             if(isTRUE(response(model) == ""))
               stop("No response variable specified.")
-            eta <- computeLinearPredictor(model, coefficients, ...)
+            if(is.null(eta))
+              eta <- computeLinearPredictor(model, coefficients, ...)
             
             if(model@family@link == "log") {
 
@@ -269,11 +263,11 @@ setMethod("computeDMinusLogLikelihood", "PointProcessModel",
           )
 
 setMethod("computeDDMinusLogLikelihood", "PointProcessModel",
-          function(model, coefficients = NULL, ...){
+          function(model, coefficients = NULL, eta = NULL, ...){
             if(isTRUE(response(model) == ""))
               stop("No response variable specified.")
-
-            eta <- computeLinearPredictor(model, coefficients, ...)
+            if(is.null(eta))
+              eta <- computeLinearPredictor(model, coefficients, ...)
             
             if(model@family@link == "log"){
               
@@ -380,13 +374,12 @@ setMethod("computeWorkingResponse", "PointProcessModel",
           }
           )
             
-setMethod("computeLinearPredictor","PointProcessModel",
-          function(model,coefficients=NULL,...){
+setMethod("computeLinearPredictor", "PointProcessModel",
+          function(model, coefficients = NULL, ...){
             if(is.null(coefficients)) {
               coefficients <- coefficients(model)
             }                                    
-            eta =  as.numeric(getModelMatrix(model) %*% coefficients)
-            return(eta)
+            as.numeric(getModelMatrix(model) %*% coefficients)
           }
           )
 
@@ -535,7 +528,7 @@ setMethod("computeModelMatrix", "PointProcessModel",
                                      ## and the total number of terms
                                      ## is generally relatively small.
                                      mc.preschedule = FALSE 
-                                     ) ## End lapplyParalle
+                                     ) ## End lapplyParallel
 
 
             
@@ -719,7 +712,7 @@ setMethod("computeVar", "PointProcessModel",
                      } else {
                        tmp <- try(solve(vcovInv[-model@fixedCoefficients$which,
                                                 -model@fixedCoefficients$which]),
-                                  silent=TRUE)
+                                  silent = TRUE)
                        if(class(tmp) == "try-error") {
                          message("Fisher information singular:\n", tmp[1], " Check convergence status and parameterization.")
                        } else {
@@ -760,12 +753,15 @@ setMethod("getLinearFilter", "PointProcessModel",
               nr <- min(nr, length(model@basisPoints))
             }
 
-            for(j in filterTerms){
+            NR <- length(model@basisPoints)
+            i <- round(seq_len(min(nr, NR))*NR/nr)
+
+            for(j in filterTerms) {
               term <- attr(mt[j], "term.labels")
-              NR <- dim(getBasis(model, term))[1]
-              i <- round(seq_len(min(nr, NR))*NR/nr)
               varName <- paste(all.vars(parse(text = term)), collapse = ".")
-              design[[varName]] <- cbind(design[[varName]], getBasis(model, term)[i, ,drop=FALSE])}
+              design[[varName]] <- cbind(design[[varName]],
+                                         getBasis(model, term)[i, , drop=FALSE])
+            }
 
             for(j in seq_along(design)){
               linearFilter[[j]] <- design[[j]] %*% coefficients(model)[dimnames(design[[j]])[[2]]]
@@ -774,11 +770,16 @@ setMethod("getLinearFilter", "PointProcessModel",
             }
 
             names(linearFilter) <- names(design)
+            linearFilter <- as.data.frame(linearFilter)
+            if (dim(linearFilter)[2] == 0)
+              linearFilter <- data.frame(row.names = model@basisPoints[i])
           
             if(isTRUE(se)) {
-              return(list(linearFilter = cbind(data.frame(x=model@basisPoints[i]), as.data.frame(linearFilter)), se = linearFilterSE))
+              return(list(linearFilter = cbind(data.frame(x = model@basisPoints[i]),
+                            linearFilter), se = linearFilterSE))
             } else {
-              return(cbind(data.frame(x = model@basisPoints[i]), as.data.frame(linearFilter)))
+              return(cbind(data.frame(x = model@basisPoints[i]),
+                          linearFilter))
             }
               
           }
@@ -885,10 +886,11 @@ setMethod("getTermPlotData", "PointProcessModel",
             if(se) {
               moltenFilter <- melt(linearFilter$linearFilter, id.vars = "x")
               plotData <- cbind(moltenFilter,
-                                data.frame(cf.lower = moltenFilter$value-q*unlist(linearFilter$se),
-                                           cf.upper = moltenFilter$value+q*unlist(linearFilter$se)))
+                                data.frame(cf.lower = moltenFilter$value - q*unlist(linearFilter$se),
+                                           cf.upper = moltenFilter$value + q*unlist(linearFilter$se)))
               if(!is.null(trans))
-                plotData[, c("value", "cf.lower", "cf.upper")] <- do.call(trans,list(plotData[, c("value", "cf.lower", "cf.upper")]))
+                plotData[, c("value", "cf.lower", "cf.upper")] <-
+                  do.call(trans, list(plotData[, c("value", "cf.lower", "cf.upper")]))
             } else {
               plotData <- melt(linearFilter, id.vars = "x")
               if(!is.null(trans))
@@ -971,7 +973,7 @@ setMethod("optimFit", "PointProcessModel",
               control <- c(list(maxit = 1000), control)
             
             if(length(fixedPar) != 0) {
-              nrPar <- parDim -length(fixedPar$which)
+              nrPar <- parDim - length(fixedPar$which)
               tmpPar <- numeric(parDim)
               tmpPar[fixedPar$which] <- fixedPar$value
             }
@@ -987,7 +989,7 @@ setMethod("optimFit", "PointProcessModel",
             } else {
               initPar <- rep(.Machine$double.eps, nrPar)             
             warning("Length of initial parameter vector wrong. Initial parameters all set to 0.")
-          }
+            }
             
             ## Setting up the objective function to minimize
 
@@ -998,26 +1000,26 @@ setMethod("optimFit", "PointProcessModel",
               } else {
                 mll <- function(par,...) {
                   tmpPar[-fixedPar$which] <- par
-                  computeMinusLogLikelihood(model,tmpPar,...)
+                  computeMinusLogLikelihood(model, tmpPar,...)
                 }
                 dmll <- function(par,...) {
                   tmpPar[-fixedPar$which] <- par
-                  computeDMinusLogLikelihood(model,tmpPar,...)[-fixedPar$which]
+                  computeDMinusLogLikelihood(model, tmpPar,...)[-fixedPar$which]
                 }
               }
             } else {
               if(length(fixedPar) == 0) {
-                mll <- function(par,...) computeMinusLogLikelihood(model,par,...) + as.numeric(par %*% Omega %*% par)
-                dmll <- function(par,...) computeDMinusLogLikelihood(model,par,...) + 2*as.numeric(par %*% Omega)
+                mll <- function(par,...) computeMinusLogLikelihood(model, par, ...) + as.numeric(par %*% Omega %*% par)
+                dmll <- function(par,...) computeDMinusLogLikelihood(model, par, ...) + 2*as.numeric(par %*% Omega)
               } else {
                 mll <- function(par,...) {
                   Omega <- Omega[-fixedPar$which,-fixedPar$which]
                   tmpPar[-fixedPar$which] <- par
-                  computeMinusLogLikelihood(model,tmpPar,...) + as.numeric(par %*% Omega %*% par)
+                  computeMinusLogLikelihood(model, tmpPar, ...) + as.numeric(par %*% Omega %*% par)
                 }
                 dmll <- function(par,...) {
                   tmpPar[-fixedPar$which] <- par
-                  computeDMinusLogLikelihood(model,tmpPar,...)[-fixedPar$which] + 2*as.numeric(par %*% Omega)
+                  computeDMinusLogLikelihood(model, tmpPar, ...)[-fixedPar$which] + 2*as.numeric(par %*% Omega)
                 }
               }
             }
@@ -1032,8 +1034,8 @@ setMethod("optimFit", "PointProcessModel",
 
             if(family(model)@link == "identity") {
               method <- "L-BFGS-B"
-              if(attr(terms(formula(model)), "intercept")==1) {
-                lower = c(sqrt(.Machine$double.eps),rep(0,dim(getModelMatrix(model))[2]-1))
+              if(attr(terms(formula(model)), "intercept") == 1) {
+                lower = c(sqrt(.Machine$double.eps), rep(0,dim(getModelMatrix(model))[2]-1))
               } else {
                 lower = sqrt(.Machine$double.eps)
               }
@@ -1156,7 +1158,14 @@ setMethod("glmnetFit", "PointProcessModel",
                 } else if (link == 'identity')
                   {
                     weights <- model@delta
-                    y[points] <- 1/weights[points]
+                    yweighted <- 1/weights[points]
+                    yweighted[yweighted == Inf] <- 0
+                    y[points] <- yweighted
+                    ## TODO: The penaltyWeights are as derived in the
+                    ## LassoHawkes paper, but results in problems with
+                    ## the model selection step below based on the
+                    ## averaged variance and the concept of effective
+                    ## degrees of freedom.
                     penaltyWeights <- sqrt(colSums(X[points, ]^2))
                     penaltyWeights <- pmax(penaltyWeights, 1)
                     glmnetFit <- glmnet(x = X,
@@ -1164,19 +1173,28 @@ setMethod("glmnetFit", "PointProcessModel",
                                         family = "gaussian",
                                         weights = weights,
                                         standardize = FALSE,
-                                        penalty.factor = penaltyWeights,
+##                                        penalty.factor = penaltyWeights,
                                         alpha = 1)
 
                   }
 
-              ## An AIC-type of criteriaon - ad hoc.
+              ## An AIC-type of criterion - ad hoc.
               err <- (1 - glmnetFit$dev.ratio) * glmnetFit$nulldev
               if (link == 'log') {
                 selected <- which.min(2*glmnetFit$df + err)
               } else if (link == 'identity') {
-                ## TODO: Using the estimated sigmasq this way is very, very ad hoc!
+                ## These computatations result in the same err vector
+                ## hat <- weights * t(glmnetFit$a0 + t(X %*% glmnetFit$beta))
+                ## y[points] <- 1
+                ## err <- colSums((y - hat)^2/pmax(weights, 1e-10))
+
+                ## The following uses an average prediction variance
+                ## based on the Poisson distribution.
                 m <- length(err)
-                sigmasqHat <- err[m]/(dim(X)[1] - glmnetFit$df[m])
+                hat <- (glmnetFit$a0[m] + X %*% glmnetFit$beta[, m])
+                sigmasqHat <- sum(pmax(as.vector(hat), 0))/(dim(X)[1] - glmnetFit$df[m])             
+                ## TODO: Using the estimated sigmasq this way is very ad hoc!
+                ## sigmasqHat <- err[m]/(dim(X)[1] - glmnetFit$df[m])
                 selected <- which.min(2*glmnetFit$df*sigmasqHat + err)
               }
               coefficients(model) <- coefficients(glmnetFit)[, selected]
@@ -1192,6 +1210,14 @@ setMethod("glmnetFit", "PointProcessModel",
                                   )
               model@optimResult <- optimResult
             }
+
+            nonZeroTerms <- tapply(coefficients(model),
+                                   getAssign(model),
+                                   function(x) any(x != 0))
+            model <- update(model,
+                            names(nonZeroTerms)[nonZeroTerms],
+                            fit = FALSE)
+            
             return(model)
           }
           )
@@ -1254,7 +1280,8 @@ setMethod("glmFit", "PointProcessModel",
                               family = poisson(link),
                               offset = offset,
                               weights = weights,
-                              control = control
+                              control = control,
+                              start = coefficients(model)
                               )
             
             coefficients(model) <- glmFit$coefficients
@@ -1364,7 +1391,8 @@ setMethod("vcov", "PointProcessModel",
           )
 
 setMethod("update", "PointProcessModel",
-          function(object, formula = .~., warmStart = TRUE, fixedCoefficients = list(), fit = TRUE, ...){
+          function(object, formula = .~., warmStart = TRUE,
+                   fixedCoefficients = list(), fit = TRUE, ...){
             
             modelFormula <- formula(object)
             if(class(formula) != "formula") {
@@ -1422,7 +1450,6 @@ setMethod("update", "PointProcessModel",
               }
             } else {
               assign("basisComputed", FALSE, object@basisEnv)
-##              unlockBinding("basis", object@basisEnv)
               object <- computeModelMatrix(object)
               coefficients(object) <- rep(.Machine$double.eps,
                                           dim(getModelMatrix(object))[2])

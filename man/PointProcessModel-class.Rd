@@ -108,7 +108,7 @@
       minus-log-likelihood function.}
     
     \item{computeDMinusLogLikelihood}{\code{signature(model =
-	"PointProcessModel")}: Computes the first derivate of the
+	"PointProcessModel")}: Computes the gradient of the
       minus-log-likelihood function.}
 
     \item{computeLinearPredictor}{\code{signature(model =

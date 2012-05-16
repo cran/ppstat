@@ -2,12 +2,11 @@ pointProcessSmooth <- function(
                                formula,
                                data,
                                family,
-                               support,
+                               support = 1,
                                lambda = 1,
                                allKnots = FALSE,
                                N = 200,
                                Delta,
-                               basisPoints,
                                coefficients,
                                fixedCoefficients = list(),
                                fit = TRUE,
@@ -19,18 +18,9 @@ pointProcessSmooth <- function(
   argList <- as.list(call)[-1]
   argList$fit <- FALSE
 
-  if(missing(basisPoints))
-    {
-      if(!(missing(support)))
-        {
-          if(length(support) == 1)
-            support <- c(0,max(support[1],0))
-        } else {
-          stop("Must specify either 'support' or 'basisPoints'.")
-        }
-    } else {
-      support = range(basisPoints)
-    }
+  if(length(support) == 1)
+    support <- c(0, max(support[1], 0))
+  
   ### Construction of the basis expansions
   terms <- terms(formula, "s")
   specials <- attr(terms, "specials")$s
@@ -55,13 +45,12 @@ pointProcessSmooth <- function(
   
   knots <- list()
   fList <- list()
-  ## TODO: Clean this up! Ask on R-devel if there is
-  ## a problem with environments for functions ....
-  ## Is this simply lazy evaluation ... ?
+  
   termFunction <- function(knots) {
-    fknots <- knots
-    function(x) bSpline(x, knots = fknots)
+    force(knots)
+    function(x) bSpline(x, knots = knots)
   }
+
   for(i in seq_along(specialVar)) {
     x <- getPointPosition(data)[getMarkType(data) %in% response]
     y <- getPointPosition(data)[getMarkType(data) %in% specialVar[[i]]]

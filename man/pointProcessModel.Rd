@@ -23,14 +23,12 @@
 \usage{
 
 pointProcessModel(formula, data, family, support = 1, N = 200, Delta,
-  basisPoints, Omega, coefficients, fixedCoefficients = list(),
-  modelMatrix = TRUE, fit = modelMatrix, varMethod = 'Fisher',
-  basisEnv, ...)
+  Omega, coefficients, fixedCoefficients = list(), modelMatrix = TRUE,
+  fit = modelMatrix, varMethod = 'Fisher', basisEnv, ...)
 
-pointProcessSmooth(formula, data, family, support, lambda = 1,
-  allKnots = FALSE, N = 200, Delta,  basisPoints, coefficients,
-  fixedCoefficients = list(), fit = TRUE, varMethod = 'Fisher',
-  basisEnv, ...)
+pointProcessSmooth(formula, data, family, support = 1, lambda = 1,
+  allKnots = FALSE, N = 200, Delta, coefficients, fixedCoefficients =
+  list(), fit = TRUE, varMethod = 'Fisher', basisEnv, ...)
 
 \S4method{ppmFit}{PointProcessModel}(model, control = list(),
 optim = 'optim', selfStart = FALSE, ...)
@@ -54,8 +52,7 @@ optim = 'optim', selfStart = FALSE, ...)
   \item{support}{a \code{numeric} vector. Specifies the support of the
     filter functions as the interval from \code{support[1]} to
     \code{support[2]}. If \code{support} is of length 1 the support is the
-    interval from 0 to \code{support[1]}. Is ignored if
-    \code{basisPoints} is specified. The default value is 1.}
+    interval from 0 to \code{support[1]}. The default value is 1.}
 
   \item{lambda}{a \code{numeric}. The tuning parameter for the
   penalization term used in \code{pointProcessSmooth}. Default value is
@@ -72,12 +69,7 @@ optim = 'optim', selfStart = FALSE, ...)
     \code{Delta}-grid values in the support. If missing, \code{Delta} is
     set to the length of the support divided by \code{N}. If specified,
     overrides the use of \code{N}.}
-  
-  \item{basisPoints}{a \code{numeric} vector. Specifies the points where
-    the basis functions are evaluated. If missing, the basis functions
-    are evaluated equidistantly at \code{Delta}-grid points in the
-    support.}
-  
+    
   \item{Omega}{an optional square matrix resulting in a quadratic penalization of
     the parameter vector. If missing, no penalization term is added to
     the minus-log-likelihood when the estimates are computed.}
@@ -143,9 +135,8 @@ optim = 'optim', selfStart = FALSE, ...)
 
   When calling \code{pointProcessModel} the three arguments
   \code{formula}, \code{data} and \code{family} must always be
-  specified. In addition, a specification of the argument \code{support} (and
-  optionally \code{N} or \code{Delta}) or the argument
-  \code{basisPoints} should be considered.
+  specified. In addition, a specification of the argument \code{support} and
+  optionally \code{N} or \code{Delta} should be considered.
 
   The \code{formula} specifies together with the \code{family} the
   conditional intensity for a point process in terms of the history of
@@ -358,7 +349,8 @@ summary(toyPPM)
 \dontrun{## Plot of the filter function
 termPlot(toyPPM)}
 
-toyPPM <- pointProcessModel(BETA ~ cut(ALPHA, c(0,1,2)),
+toyPPM <- pointProcessModel(BETA ~ cut(ALPHA, c(0,1,2),
+                                       include.lowest = TRUE),
                             data = toyData,
                             family = Hawkes(),
                             support = 2)
