@@ -12,9 +12,8 @@ sobolevKernel <- function(s, r, t = 1, sub = NULL) {
   }
 }
 
-gaussianKernel <- function(s, r, t = 1, c = 5e3, ...) {
+gaussianKernel <- function(s, r, t = 1, c = 1) {
   s <- s/t
   r <- r/t
-##  1 + s * r +
     exp( - c * (s - r)^2)
 }

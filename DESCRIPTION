@@ -1,12 +1,12 @@
 Package: ppstat
 Type: Package
 Title: Point Process Statistics
-Version: 0.8.1
-Date: 2012-05-16
+Version: 0.9
+Date: 2013-04-05
 Author: Niels Richard Hansen <Niels.R.Hansen@math.ku.dk>.
 Maintainer: Niels Richard Hansen <Niels.R.Hansen@math.ku.dk>
-Depends: R (>= 2.14.1), processdata (>= 0.8), reshape2, ggplot2 (>=
-        0.9.0), methods, igraph
+Depends: R (>= 2.14.1), processdata (>= 0.8.2), reshape2, ggplot2 (>=
+        0.9.0), methods
 Imports: stats, splines, Matrix, parallel
 Suggests: RUnit, glmnet, MatrixModels
 Description: This package implements statistical methods for
@@ -14,6 +14,7 @@ Description: This package implements statistical methods for
 License: GPL (>= 2)
 URL: http://www.math.ku.dk/~richard/ppstat
 LazyLoad: yes
-Packaged: 2012-08-20 10:47:04 UTC; Niels
+Packaged: 2013-04-07 20:41:40 UTC; richard
+NeedsCompilation: yes
 Repository: CRAN
-Date/Publication: 2012-08-20 12:29:03
+Date/Publication: 2013-04-08 00:00:25

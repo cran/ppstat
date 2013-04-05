@@ -108,7 +108,7 @@ termPlot(toyPPM)
 ## expansion at 0.
 
 toyPPM <- pointProcessModel(BETA ~ bSpline(BETA, knots = seq(-3, 3, 1), trunc = 0) +
-                            bSpline(ALPHA, knots = seq(-3, 3, 1, trunc = c(-2, 2))),
+                            bSpline(ALPHA, knots = seq(-3, 3, 1), trunc = c(-2, 2)),
                             data = toyData,
                             family = Gibbs(),
                             support = c(-2, 2),
